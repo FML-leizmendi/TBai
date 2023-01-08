@@ -1,0 +1,468 @@
+Option Compare Database
+Option Explicit
+
+Const CM2POINTS = 567
+
+''' WinApi function that maps a UTF-16 (wide character) string to a new character string
+''' se usa en Utf8BytesFromString
+Private Declare Function WideCharToMultiByte Lib "kernel32" ( _
+    ByVal CodePage As Long, _
+    ByVal dwFlags As Long, _
+    ByVal lpWideCharStr As Long, _
+    ByVal cchWideChar As Long, _
+    ByVal lpMultiByteStr As Long, _
+    ByVal cbMultiByte As Long, _
+    ByVal lpDefaultChar As Long, _
+    ByVal lpUsedDefaultChar As Long) As Long
+    
+' CodePage constant for UTF-8
+Private Const CP_UTF8 = 65001
+
+
+
+
+'*******************************************************************************
+'* ShellWSH
+'* Llama al shell de WSH permitiendo la posibilidad de hacerlo de manera
+'* sincrona o asincrona
+'* Argumentos: strRutaAplicacion => Ruta de la aplicación a ejecutar
+'*             strParametros     => (opcional) parámetros a pasarle a la aplic.
+'*             blnEsperar        => (opcional) esperar a la finalización.
+'* uso: ShellWSH "C:\windows\notepad","C:\pp.txt", True
+'* ESH 25/10/05 17:28
+'*******************************************************************************
+ 
+Public Sub RT_ShellWSH(strRutaAplicacion As String, Optional strParametros As String, Optional blnEsperar As Boolean)
+Dim vntResultado As Variant, WSHShell As Object
+ 
+    Set WSHShell = CreateObject("WScript.Shell")
+     
+    If Len(Trim(strParametros)) > 0 Then
+       vntResultado = WSHShell.Run(Chr(34) & strRutaAplicacion & Chr(34) & " " & Chr(34) & strParametros & Chr(34), 8, blnEsperar)
+    Else
+       vntResultado = WSHShell.Run(strRutaAplicacion, 8, blnEsperar)
+    End If
+     
+    Set WSHShell = Nothing
+ 
+End Sub
+
+Public Function PDFtoText(RutaFicheroPDF As String, Optional intLayout As Integer = True) As String
+    On Error GoTo HandleError
+    
+    '* nos aseguramos de borrar el auxiliar
+    On Error Resume Next
+    Kill CurrentProject.Path & "\AuxTexto.txt"
+    On Error GoTo 0
+    Dim strR As String, strFile As String, fs As FileSystemObject
+    strFile = CurrentProject.Path & "\AuxTexto.txt"
+    strR = """" & CurrentProject.Path & "\pdftotext"""
+    If intLayout Then strR = strR & " -layout"
+    strR = strR & " """ & RutaFicheroPDF & """"
+    strR = strR & " """ & strFile & ""
+    RT_ShellWSH strR, , True
+    PDFtoText = LeerArchivoTexto(strFile)
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+   
+End Function
+
+
+Public Function LeerArchivoTexto(strFile As String) As String
+    On Error GoTo HandleError
+    Dim strT As String, strR As String    'línea de texto a leer
+    
+    'Abrir el archivo
+    
+    Open strFile For Input As #1  'leer un archivo de texto por el canal #1
+    
+    
+    'Leer y procesar el contenido del archivo
+    While Not EOF(1) 'la función EOF regresa verdadero al llegar al final del archivo
+        Line Input #1, strT  'lee cada una de las líneas del archivo y las almacena en la variable texto
+        strR = strR & strT & vbCrLf
+    Wend
+    If Len(strR) > 2 Then strR = Left(strR, Len(strR) - 2)
+    'Cerrar el archivo de entrada
+    Close #1
+    LeerArchivoTexto = strR
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+Public Function EscribirArchivoTexto(strFile As String, strTexto As String) As Boolean
+    On Error GoTo HandleError
+    Dim fs As New Scripting.FileSystemObject
+    Dim ts As TextStream
+    
+    Set ts = fs.CreateTextFile(strFile, True)
+    ts.Write strTexto
+    ts.Close
+    EscribirArchivoTexto = True
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+
+
+Sub UnSegundo(Optional iSegundos As Integer = 1)
+    On Error GoTo HandleError
+    Dim dtN As Date
+    dtN = Now()
+    While DateDiff("s", dtN, Now()) < iSegundos
+        'paciencia |)
+    Wend
+    
+HandleExit:
+    Exit Sub
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Sub
+
+
+Public Function DimeCampo(strTxt As String, _
+                          lIni As Long, _
+                          strBusca As String, _
+                          intMrg As Integer, _
+                          Optional strFinCampo As String = " ", _
+                          Optional lFin As Long, _
+                          Optional ByRef strResultado As String, _
+                          Optional strMSG As String, _
+                          Optional intPasaLineasBeforeFind As Integer = False, _
+                          Optional intReverse As Integer = False) As Integer
+    'Si se pasa strFinCampo="" sirve para comprobar que la cadena buscada está presente en el Texto
+    'En caso contrario, a partir de la cadena buscada se salta espacios o tabuladroes hasta encontrar algún carácter o dígito significativo y a partír de allí recoge resultado hasta encontrarse con strFinCampo o un fin de línea o fin de fichero
+    ' con intPasaLineasBeforeFind=True hacemos que en el bucle1 se "salte los saltos de línea"
+    ' con intReverse = True, a partir del texto buscado se hace el rastreo del campo buscado hacia atrás.
+    'Si busca = "*^*" devuelve los primero que encuentra desde lIni
+    On Error GoTo HandleError
+    Dim k As Long, bAsc As Byte, strR As String, iPaso As Integer
+    iPaso = IIf(intReverse, -1, 1)
+    If strBusca = "*^*" Then
+        k = IIf(lIni = 0, 1, lIni)
+        GoTo Bucle1
+    End If
+    k = InStr(IIf(lIni <= 0, 1, lIni), strTxt, strBusca)
+    
+    If k = 0 Then
+        strMSG = "No se encontró '" & strBusca & "'"
+        GoTo HandleExit
+    End If
+    If Not intReverse Then
+        k = k + Len(strBusca)
+    Else
+        k = k - 1
+    End If
+    If strFinCampo = "" Then GoTo OK
+Bucle1:
+    bAsc = Asc(Mid(strTxt, k, 1))
+    Select Case bAsc
+        Case 0, 10, 13 ' fín de línea
+            If Not intPasaLineasBeforeFind Then
+                GoTo OK
+            Else
+                k = k + iPaso
+                GoTo Bucle1
+            End If
+        Case Is < 33 ' espacio 32, tabulador 9, ...
+            k = k + iPaso
+            GoTo Bucle1
+        Case Else
+            strR = Mid(strTxt, k, 1)
+    End Select
+    
+Bucle2:
+    k = k + iPaso
+    If InStr(k, strTxt, strFinCampo) = k Then
+        GoTo OK
+    End If
+    bAsc = Asc(Mid(strTxt, k, 1))
+    Select Case bAsc
+        Case 0, 10, 13
+            GoTo OK
+        Case Else
+            If Not intReverse Then
+                strR = strR & Mid(strTxt, k, 1)
+            Else
+                strR = Mid(strTxt, k, 1) & strR
+            End If
+            GoTo Bucle2
+    End Select
+            
+OK:
+    DimeCampo = True
+    strResultado = strR
+HandleExit:
+    lFin = k
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    DimeCampo = False
+    strResultado = "?"
+    Resume HandleExit
+End Function
+
+
+
+Function DameComando(strCMD As String) As String
+'Purpose    : Obtiene comando para enviar al shell modificando tildes, eñes y caracteres especiales
+'Author     : Lorenzo
+'Description:
+'Date       : 07ago.19
+    On Error GoTo HandleError
+    Dim strC As String, strFileC As String
+    strFileC = DirectorioDe(CurrentDb.Name) & "cmd.txt"
+    strC = "echo " & strCMD & " > " & strFileC
+    ShellWait strC
+    DameComando = LeerArchivoTexto(strFileC)
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+
+
+
+''' Return byte array with VBA "Unicode" string encoded in UTF-8
+Public Function Utf8BytesFromString(strInput As String) As Byte()
+    Dim nBytes As Long
+    Dim abBuffer() As Byte
+    ' Catch empty or null input string
+    Utf8BytesFromString = vbNullString
+    If Len(strInput) < 1 Then Exit Function
+    ' Get length in bytes *including* terminating null
+    nBytes = WideCharToMultiByte(CP_UTF8, 0&, ByVal StrPtr(strInput), -1, 0&, 0&, 0&, 0&)
+    ' We don't want the terminating null in our byte array, so ask for `nBytes-1` bytes
+    ReDim abBuffer(nBytes - 2)  ' NB ReDim with one less byte than you need
+    nBytes = WideCharToMultiByte(CP_UTF8, 0&, ByVal StrPtr(strInput), -1, ByVal VarPtr(abBuffer(0)), nBytes - 1, 0&, 0&)
+    Utf8BytesFromString = abBuffer
+End Function
+
+Public Function DimeFileOpen(strTitulo As String, strInitialFileName As String, _
+                             Optional strFiltroDescripcion As String = "PDF", _
+                             Optional strFiltroExtension As String = "*.pdf", _
+                             Optional intAllowMultiSelect As Integer = False) As String
+    On Error GoTo HandleError
+    Dim FileDlg As Office.FileDialog
+    Dim varItem As Variant, strR As String
+    Set FileDlg = Application.FileDialog(msoFileDialogFilePicker)
+    FileDlg.Title = strTitulo
+    FileDlg.AllowMultiSelect = intAllowMultiSelect
+    FileDlg.Filters.Clear
+    FileDlg.Filters.Add strFiltroDescripcion, strFiltroExtension
+    FileDlg.InitialFileName = strInitialFileName
+    If FileDlg.Show = -1 Then
+        For Each varItem In FileDlg.SelectedItems
+            strR = strR & varItem & ";"
+        Next
+    End If
+    If Len(strR) > 1 Then
+        strR = Left(strR, Len(strR) - 1)
+    End If
+    DimeFileOpen = strR
+    
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+Public Function DatosPDF(strFilePDF As String) As String
+    On Error GoTo HandleError
+    Dim strPDFtk As String, strParams As String, strFileTxt As String, strFileTmp As String, strFileTmp2 As String, intPdf2 As Integer
+    strFileTxt = Environ("Temp") & "\PDFdata.txt"
+    strFileTmp = Environ("Temp") & "\PDFtemp.pdf"
+    strFileTmp2 = Environ("Temp") & "\PDFtemp2.pdf"
+    On Error Resume Next
+    Kill strFileTxt
+    Kill strFileTmp
+    On Error GoTo HandleError
+    strPDFtk = SpNz(GetParam("PDFtk_command"), "C:\Program Files (x86)\PDFtk\bin\pdftk.exe")
+    If Dir(strPDFtk) = "" Then
+        MsgBox "Se debe instalar PDF ToolKit", vbExclamation
+        GoTo HandleExit
+    End If
+    FileCopy strFilePDF, strFileTmp
+    strParams = " " & strFileTmp & " dump_data output " & strFileTxt
+Bucle:
+    ShellWait ConComillas(strPDFtk) & strParams, vbMaximizedFocus
+    If Dir(strFileTxt) = "" Then ' no se ha generado fichero de datos
+        If intPdf2 = False Then
+            'me lo salto or el momento... PrintWordDocAsPDF strFileTmp, strFileTmp2, "PDF temp.", , , False
+            intPdf2 = True
+            strParams = " " & strFileTmp2 & " dump_data output " & strFileTxt
+            GoTo Bucle
+        End If
+        MsgBox "No se pudo leer datos del PDF: " & strFilePDF, vbExclamation
+        GoTo HandleExit
+    End If
+    DatosPDF = LeerArchivoTexto(strFileTxt)
+    
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+Public Function Redireccion2puntos(strCarpeta As String) As String
+    On Error GoTo HandleError
+    Dim i As Integer, H As Integer, strR As String
+    strR = strCarpeta
+Bucle:
+    i = InStr(strR, "\..")
+    If i > 0 Then
+        H = InStrRev(strR, "\", i - 1)
+        If H = 0 Then
+            MsgBox "No se pudo redireccionar"
+            GoTo HandleExit
+        End If
+        strR = Mid(strR, 1, H - 1) & Mid(strR, i + 3)
+        GoTo Bucle
+    End If
+    Redireccion2puntos = strR
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+Public Function GetSelItems(lst As ListBox, Optional sSeparador As String = "|") As String
+    On Error GoTo HandleError
+    Dim sR As String, vIt As Variant
+    sR = sSeparador
+    For Each vIt In lst.ItemsSelected
+        sR = sR & lst.ItemData(vIt) & sSeparador
+    Next vIt
+    GetSelItems = sR
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+Public Sub SetSelItems(lst As ListBox, sSelItems As String, Optional sSeparador As String = "|", Optional bScrollToSelection As Boolean = True)
+    On Error GoTo HandleError
+    Dim vIt As Variant, i As Integer, j As Integer
+    For i = 0 To lst.ListCount - 1 ' To 0 Step -1
+        j = InStr(sSelItems, sSeparador & lst.ItemData(i) & sSeparador)
+        lst.Selected(i) = j > 0
+        'If j = 1 Then Exit For
+    Next i
+    If bScrollToSelection Then
+        lst.SetFocus
+        Scroll_ListBox_Selected lst
+    End If
+HandleExit:
+    Exit Sub
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Sub
+
+Public Sub RequeryListAndSelItems(lst As ListBox)
+    On Error GoTo HandleError
+    Dim sSelItems As String
+    sSelItems = GetSelItems(lst)
+    lst.Requery
+    SetSelItems lst, sSelItems
+HandleExit:
+    Exit Sub
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Sub
+Public Function GuardaPosicionForm(frm As Form)
+    SetParam frm.Name & "_WindowLeft", frm.WindowLeft, 4
+    SetParam frm.Name & "_WindowTop", frm.WindowTop, 4
+End Function
+
+Public Function ColocaForm(frm As Form)
+    On Error GoTo HandleError
+    Dim lL As Long, lT As Long
+    lL = Nz(GetParam(frm.Name & "_WindowLeft"), 0)
+    If lL + frm.WindowLeft < 0 Then lL = 0
+    lT = Nz(GetParam(frm.Name & "_WindowTop"), 0)
+    If lT + frm.WindowTop < 0 Then lT = 0
+    'If lT <> 0 Then
+    frm.Move lL, lT
+HandleExit:
+    Exit Function
+HandleError:
+    MsgBox Err.Description
+    Resume HandleExit
+End Function
+
+
+Public Sub RegistroAnterior(frm As Form, ByRef lbl As Label)
+    On Error GoTo HandleError
+    Dim rs As Recordset
+    Set rs = frm.RecordsetClone
+    rs.Bookmark = frm.Bookmark
+    If rs.PercentPosition > 0 Then rs.MovePrevious
+    frm.Bookmark = rs.Bookmark
+HandleExit:
+    Exit Sub
+HandleError:
+    Select Case Err
+        Case 3021:
+            rs.MoveFirst
+            Resume Next
+        Case Else
+            MsgBox "Error nº " & Err & vbCrLf & Err.Description
+            Resume HandleExit
+    End Select
+End Sub
+
+Public Sub RegistroSiguiente(frm As Form, ByRef lbl As Label)
+    On Error GoTo HandleError
+    Dim rs As Recordset
+    Set rs = frm.RecordsetClone
+    rs.Bookmark = frm.Bookmark
+    If (rs.PercentPosition * rs.RecordCount / 100) + 1 < rs.RecordCount Then rs.MoveNext
+    frm.Bookmark = rs.Bookmark
+HandleExit:
+    Exit Sub
+HandleError:
+    Select Case Err
+        Case 3021:
+            rs.MoveLast
+            Resume
+        Case Else
+            MsgBox "Error nº " & Err & vbCrLf & Err.Description
+            Resume HandleExit
+    End Select
+End Sub
+
+Public Sub Pon_lblRegistros(frm As Form, ByRef lbl As Label)
+    On Error GoTo HandleError
+    Dim rs As Recordset, lCurrent As Long, lTotal As Long
+    Set rs = frm.RecordsetClone
+    rs.Bookmark = frm.Bookmark
+    lCurrent = (rs.PercentPosition * rs.RecordCount / 100) + 1
+    lTotal = rs.RecordCount
+    lbl.Caption = lCurrent & " de " & lTotal & " registros"
+HandleExit:
+    Exit Sub
+HandleError:
+    Select Case Err
+        Case Else
+            MsgBox "Error nº " & Err & vbCrLf & Err.Description
+            Resume HandleExit
+    End Select
+End Sub

@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone="yes"?>
+<Relation>
+  <Name value="EstructuraCabEstructuraDet"/>
+  <Table value="EstructuraCab"/>
+  <ForeignTable value="EstructuraDet"/>
+  <Attributes value="256"/>
+  <PartialReplica value="false"/>
+  <Fields>
+    <Field_0 name="IdEstruCab" foreignname="IdEstruCab"/>
+  </Fields>
+</Relation>
